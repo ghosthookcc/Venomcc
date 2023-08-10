@@ -128,11 +128,20 @@ namespace  Venomcc.Utility.Command
 {
     public static class CommandUtilities
     {
-        public static Dictionary<string, ICommand.Command> commands = new Dictionary<string, ICommand.Command>()
+        private static Dictionary<string, ICommand.ICommand> commands = new Dictionary<string, ICommand.ICommand>()
         {
-            ["listCons"] = new listCons(new ICommand.CommandInfo("listCons", null, CommandScope.local)),
+            ["listCons"] = new listCons(new CommandInfo("listCons", null, CommandScope.local)),
         };
         
+        public static ICommand.ICommand? getCommand(string commandName)
+        {
+            if (isCommandExist(commandName))
+            {
+                return commands[commandName];
+            }
+            return null;
+        }
+
         public static bool isCommandExist(string commandName)
         {
             bool commandExists = commands.ContainsKey(commandName) ? true : false;
