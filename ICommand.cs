@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Runtime.InteropServices;
+using Venomcc.ICommand;
 using Venomcc.Utility.Command;
 
 namespace Venomcc.ICommand
@@ -9,71 +11,70 @@ namespace Venomcc.ICommand
         network,
     }
 
-    public struct CommandInfo
-    {
-        string? commandName { get; }
-        List<string>? commandArgs { get; set;  }
-        public CommandScope scope { get; }
-
-        ICommand? command;
-
-        public CommandInfo(string commandName, List<string>? commandArgs, CommandScope scope)
-        {
-            if (CommandUtilities.commands.ContainsKey(commandName))
-            {
-                this.commandName = commandName;
-                command = CommandUtilities.commands[commandName];
-            }
-            if (commandArgs != null)
-            {
-                this.commandArgs = commandArgs;
-            }
-            this.scope = scope;
-        }
-    }
-
     public interface ICommand
     {
-        void SelectCommand(string commandName); 
+        CommandScope scope { get; }
+        void setArguments(List<string>? args);
+        void addArgument(string? arg);
         void Execute();       
     }
 
-    public abstract class Command : ICommand
+    public class CommandInterpreter
     {
-        private Command instance;
-        private CommandInfo selectedCommand;
-        public void SelectCommand(string commandName)
+        private Stack<ICommand> _commandHistory = new Stack<ICommand>();
+
+        public void Execute(string commandName, List<string>? args = null)
         {
-            if (CommandUtilities.commands.ContainsKey(commandName))
+            ICommand? commandToRun = CommandUtilities.getCommand(commandName);
+            if (commandToRun != null) 
             {
-                instance = CommandUtilities.commands[commandName];
-                selectedCommand = instance.getSelectedCommand();
+                if (args != null)
+                {
+                    commandToRun.setArguments(args);
+                }
+                commandToRun.Execute();
+                _commandHistory.Push(commandToRun);
             }
         }
-        public abstract void Execute();
 
-        public CommandInfo getSelectedCommand()
-        {
-            return selectedCommand;
+        public void Execute(ICommand command) 
+        { 
+            command.Execute(); 
+            _commandHistory.Push(command); 
         }
 
-        public Command(CommandInfo selectedCommand)
+        public CommandInterpreter()
         {
-            this.selectedCommand = selectedCommand;
-            instance = this;
+
         }
     }
 
-    public class listCons : Command
+    public class listCons : ICommand
     {
-        public listCons(CommandInfo selectedCommand) : base(selectedCommand)
+        CommandScope ICommand.scope => CommandScope.local;
+        public void setArguments(List<string>? args = null)
         {
-            
+            if (args != null)
+            {
+                
+            }
+        }
+        public void addArgument(string? arg = null)
+        {
+            if (arg != null)
+            {
+
+            }
+        }
+        
+        public void Execute()
+        {
+
         }
 
-        public override void Execute()
+        public listCons()
         {
-            throw new NotImplementedException();
+
         }
     }
 }
