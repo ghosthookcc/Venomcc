@@ -4,6 +4,7 @@ namespace Venomcc.Threads
 {
     public struct threadInfo
     {
+        public ManualResetEvent ManualResetEvent = new ManualResetEvent(true);
         public int ID;
         public Thread? Thread = null;
 
@@ -20,6 +21,10 @@ namespace Venomcc.Threads
                 Thread.Start();
             }
         }
+
+        public void Pause() => ManualResetEvent.Reset();
+        public void Resume() => ManualResetEvent.Set();
+
 
         public void Abort()
         {
@@ -114,12 +119,18 @@ namespace Venomcc.Threads
 
         public void StartThread(int ID)
         {
-            AllThreads[ID].threadInfo.Start();
+            if (_lock != null)
+            {
+                lock (_lock)
+                {
+                    AllThreads[ID].threadInfo.Start();
+                }
+            }
         }
 
         public async Task StartTask(int ID)
         {
-            await Task.Run(() => 
+            await Task.Run(() =>
             {
                 AllTasks[ID].Method?.Invoke();
             });
@@ -129,9 +140,15 @@ namespace Venomcc.Threads
         {
             await Task.Run(() =>
             {
-                foreach (KeyValuePair<int, (ThreadStart threadStart, threadInfo threadInfo)> threadKVP in AllThreads)
+                if (_lock != null)
                 {
-                    threadKVP.Value.threadInfo.Start();
+                    lock (_lock)
+                    {
+                        foreach (KeyValuePair<int, (ThreadStart threadStart, threadInfo threadInfo)> threadKVP in AllThreads)
+                        {
+                            threadKVP.Value.threadInfo.Start();
+                        }
+                    }
                 }
             });
         }
@@ -158,10 +175,7 @@ namespace Venomcc.Threads
 
                     backgroundTask = Task.Run(() =>
                     {
-                        if (currentTaskInfo.Method != null)
-                        {
-                            currentTaskInfo.Method();
-                        }
+                        currentTaskInfo.Method?.Invoke();
                     });
                 }
             });
@@ -176,7 +190,7 @@ namespace Venomcc.Threads
         {
             AllThreads[ID].threadInfo.Abort();
         }
-        
+
         public static void LockThread()
         {
 

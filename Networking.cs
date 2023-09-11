@@ -4,6 +4,8 @@ using System.Net.Sockets;
 using System.Text;
 using System.Runtime.InteropServices;
 using Venomcc.Utility.Networking;
+using Venomcc.UI;
+using System.Data;
 
 namespace Venomcc.Networking
 {
@@ -13,16 +15,10 @@ namespace Venomcc.Networking
         Broadcast = 1,
     }
 
-    public enum ConsoleMessageType
-    {
-        None = 0,
-        NEWLINE = 1,
-        NEWSECTION = 2,
-    }
-
     public struct connSockInfo
     {
-        public Dictionary<IPEndPoint, (Socket connSock, Queue<string> dataQueue)> connections = new Dictionary<IPEndPoint, (Socket connSock, Queue<string> dataQueue)>();
+        public readonly object _connectionsLock = new object();
+        public Dictionary<string, Socket> connections = new Dictionary<string, Socket>();
 
         public Socket? connSock = null;
         public readonly ushort port;
@@ -75,8 +71,8 @@ namespace Venomcc.Networking
             ["EM"] = "<~EM~>",
             //["SCD"] = "<~SCD~>",
             ["CCD"] = "<~CCD~>",
-            ["SC"]  = "<~SC~>",
-            ["EC"]  = "<~EC~>",
+            ["SC"] = "<~SC~>",
+            ["EC"] = "<~EC~>",
         };
 
         public enum MessageHeaderTagTypes
@@ -84,7 +80,6 @@ namespace Venomcc.Networking
             SM, EM, SCD, CCD, SC, EC
         };
 
-        static public Queue<(ConsoleMessageType type, string data)> nextInData = new Queue<(ConsoleMessageType type, string data)>();
         static public Queue<(IPEndPoint endPoint, ArraySegment<byte> data)> nextOutData = new Queue<(IPEndPoint endPoint, ArraySegment<byte> data)>();
 
         readonly protected object _lock;
@@ -106,53 +101,16 @@ namespace Venomcc.Networking
             return null;
         }
 
-        public void OutputConnectionsDataQueue(IPEndPoint endPoint)
-        {
-            Queue<string> dataQueue = netUserInfo.connections[endPoint].dataQueue;
-            while (dataQueue.Count > 0)
-            {
-                string currentData = dataQueue.Dequeue(); 
-                enqueueInData(ConsoleMessageType.NEWLINE, currentData);
-            }
-        }
-
-        public void OutputConnectionsDataQueue(int amount)
-        {
-            if (amount > netUserInfo.connections.Count()) amount = netUserInfo.connections.Count();
-
-            KeyValuePair<IPEndPoint, (Socket connSock, Queue<string> dataQueue)> dataKVP;
-            for (int idx = 0; idx < amount; idx++)
-            {
-                dataKVP = netUserInfo.connections.ToList()[idx];
-                if (dataKVP.Value.dataQueue.Count() > 0)
-                {
-                    for (int dataIdx = 0; dataIdx < dataKVP.Value.dataQueue.Count(); dataIdx++)
-                    {
-                        enqueueInData(ConsoleMessageType.NEWLINE, dataKVP.Value.dataQueue.Dequeue().Trim());
-                    }
-                }
-            }
-        }
-
-        public static void enqueueInData(ConsoleMessageType typeData, string inData)
-        {
-            nextInData.Enqueue((typeData, inData));
-        }
-
-        public static void enqueueOutData(IPEndPoint endPoint, ArraySegment<byte> outData)
-        {
-            nextOutData.Enqueue((endPoint, outData));
-        }
-
         public void GetConnections()
         {
-            lock(_lock)
+            uint idx = 1;
+            lock (netUserInfo._connectionsLock)
             {
-                uint idx = 1;
-                foreach (KeyValuePair<IPEndPoint, (Socket, Queue<string>)> entry in netUserInfo.connections.ToList())
+                foreach (KeyValuePair<string, Socket> entry in netUserInfo.connections)
                 {
-                    enqueueInData(ConsoleMessageType.NEWSECTION,
-                                  "[/] Client[" + idx + "]: " + entry.Key + " . . .");
+                    ConsoleUI.enqueueConsoleData(ConsoleMessageType.NEWSECTION,
+                                     "[/] Client[" + idx + "]: " + entry.Key + " . . .\n");
+                    idx++;
                 }
             }
         }
@@ -162,89 +120,71 @@ namespace Venomcc.Networking
             return netUserInfo.connections.Count();
         }
 
-        public static void ConsumeNextInData()
-        {
-            if (nextInData.Count() > 0)
-            {
-                (ConsoleMessageType type, string data) incoming = nextInData.Dequeue();
-
-                switch (incoming.type)
-                {
-                    case ConsoleMessageType.NEWLINE:
-                        incoming.data = incoming.data + "\n";
-                        break;
-                    case ConsoleMessageType.NEWSECTION:
-                       incoming.data = "\n" + incoming.data + "\n";
-                       break;
-                }
-
-                Console.Write(incoming.data);
-            }
-        }
-
-        public void ConsumeNextOutData()
+        public void ConsumeNextOutgoingData()
         {
             if (netUserInfo.connSock != null && netUserInfo.connSockEndPoint != null)
             {
-                (IPEndPoint endPoint, ArraySegment<byte> data) outgoing = nextOutData.Dequeue();
-                netUserInfo.connSock.SendToAsync(outgoing.data, outgoing.endPoint);
+                lock (netUserInfo._connectionsLock)
+                {
+                    (string? endPoint, ArraySegment<byte>? data) outgoing = ConsoleUI.ConsumeNextOutgoingData();
+                    if (outgoing.endPoint != null && outgoing.data != null)
+                    {
+                        netUserInfo.connSock.SendTo(outgoing.data.Value, IPEndPoint.Parse(outgoing.endPoint));
+                    }
+                }
             }
         }
 
-        private async Task Send(SendMessageType typeData, dynamic outData, [Optional] IPEndPoint endPoint)
+        private async Task Send(SendMessageType typeData, dynamic outData, string? endPoint = null)
         {
             await Task.Run(() =>
             {
-                if (netUserInfo.connections.Count() > 0 && netUserInfo.connSock != null)
+                lock (netUserInfo._connectionsLock)
                 {
-                    List<byte[]> dataChunks = NetworkUtilities.generateDataChunksWithHeaderTags(outData, 1024);
-
-                    switch (typeData)
+                    if (netUserInfo.connections.Count() > 0 && netUserInfo.connSock != null)
                     {
-                        case SendMessageType.Normal:
-                            if (endPoint != null)
-                            {
-                                lock (_lock)
+                        List<byte[]> dataChunks = NetworkUtilities.generateDataChunksWithHeaderTags(outData, 1024);
+
+                        switch (typeData)
+                        {
+                            case SendMessageType.Normal:
+                                if (endPoint != null)
                                 {
                                     foreach (byte[] chunk in dataChunks)
                                     {
-                                        enqueueOutData(endPoint, chunk);
-                                        ConsumeNextOutData();
+                                        ConsoleUI.enqueueOutData(ConsoleMessageType.None, chunk, endPoint.ToString());
                                     }
                                 }
-                            }
-                            break;
-                        case SendMessageType.Broadcast:
-                            lock (_lock)
-                            {
-                                foreach (KeyValuePair<IPEndPoint, (Socket, Queue<string>)> entry in netUserInfo.connections.ToList())
+                                break;
+                            case SendMessageType.Broadcast:
+                                foreach (KeyValuePair<string, Socket> entry in netUserInfo.connections)
                                 {
                                     foreach (byte[] chunk in dataChunks)
                                     {
-                                        enqueueOutData(entry.Key, chunk);
-                                        ConsumeNextOutData();
+                                        ConsoleUI.enqueueOutData(ConsoleMessageType.None, chunk, entry.Key.ToString());
                                     }
+
                                 }
-                            }
-                            break;
+                                break;
+                        }
                     }
                 }
             });
         }
 
-        public async Task SendTo(SendMessageType typeData, string outData, [Optional] IPEndPoint endPoint)
+        public async Task SendTo(SendMessageType typeData, string outData, [Optional] string endPoint)
         {
             string formattedOutData = MessageHeaderTags["SM"] + outData + MessageHeaderTags["EM"];
 
             await Send(typeData, formattedOutData, endPoint);
         }
 
-        public async Task SendTo(SendMessageType typeData, ArraySegment<byte> outData, [Optional] IPEndPoint endPoint)
+        public async Task SendTo(SendMessageType typeData, ArraySegment<byte> outData, [Optional] string endPoint)
         {
             byte[]? formattedOutData = null;
             if (outData.Array != null)
             {
-                formattedOutData = new byte[MessageHeaderTags["SM"].Length + 
+                formattedOutData = new byte[MessageHeaderTags["SM"].Length +
                                             outData.Array.Length +
                                             MessageHeaderTags["EM"].Length];
 
@@ -269,7 +209,7 @@ namespace Venomcc.Networking
         public abstract Task Connect();
         public abstract Task Disconnect();
     }
-    
+
     public class Server : NetUser
     {
         public Server(object _lock, string ip, ushort port) : base(_lock, port)
@@ -286,6 +226,8 @@ namespace Venomcc.Networking
 
         public void AcceptIncomingConnections()
         {
+            while (true)
+            {
                 Socket newConnection;
                 IPEndPoint? newConnectionEndPoint;
                 if (netUserInfo.connSock != null)
@@ -295,41 +237,43 @@ namespace Venomcc.Networking
 
                     if (newConnectionEndPoint != null)
                     {
-                        lock (_lock)
+                        lock (netUserInfo._connectionsLock)
                         {
-                            netUserInfo.connections.Add(newConnectionEndPoint, (newConnection, new Queue<string>()));
-                            enqueueInData(ConsoleMessageType.NEWSECTION,
-                                          "[+] Received new connection from: " + newConnection.RemoteEndPoint + " . . .");
+                            netUserInfo.connections.Add(newConnectionEndPoint.ToString(), newConnection);
+                            ConsoleUI.enqueueConsoleData(ConsoleMessageType.NEWSECTION,
+                                                 "[+] Received new connection from: " + newConnection.RemoteEndPoint + " . . .");
                             GetConnections();
                         }
                     }
                 }
+            }
         }
 
         public override void ReceiveData()
         {
+            while (true)
+            {
                 if (netUserInfo.connSock != null)
                 {
                     ArraySegment<byte> incomingData = new ArraySegment<byte>(new byte[netUserInfo.chunkSize]);
                     int receivedAmount = 0;
 
-                    IPEndPoint? currentConnectionSelected = null;
+                    string? currentConnectionSelected = null;
                     List<string> savedConnectionData = new List<string>();
                     string finalData = "";
 
                     string dataAsString;
-                    List<string> parsedMessageData;
 
                     byte[] resizedData;
-                    lock (_lock)
+                    lock (netUserInfo._connectionsLock)
                     {
-                        foreach (KeyValuePair<IPEndPoint, (Socket connSock, Queue<string> dataQueue)> connectionKVP in netUserInfo.connections)
+                        foreach (KeyValuePair<string, Socket> connectionKVP in netUserInfo.connections)
                         {
-                            while (connectionKVP.Value.connSock.Available > 0)
+                            while (connectionKVP.Value.Available > 0)
                             {
                                 currentConnectionSelected = connectionKVP.Key;
 
-                                receivedAmount = connectionKVP.Value.connSock.Receive(incomingData);
+                                receivedAmount = connectionKVP.Value.Receive(incomingData);
                                 resizedData = incomingData.Take(receivedAmount).ToArray();
                                 dataAsString = Encoding.UTF8.GetString(resizedData);
                                 savedConnectionData.Add(dataAsString);
@@ -337,19 +281,12 @@ namespace Venomcc.Networking
                             }
                             if (currentConnectionSelected != null && savedConnectionData.Count() > 0)
                             {
-                                enqueueInData(ConsoleMessageType.NEWSECTION, "");
                                 for (int dataIdx = 0; dataIdx < savedConnectionData.Count(); dataIdx++)
                                 {
                                     finalData += savedConnectionData[dataIdx];
                                 }
-                                parsedMessageData = NetworkUtilities.parseMessagesIgnoringHeaderTags(finalData);
-
-                                for (int idx = 0; idx < parsedMessageData.Count(); idx++)
-                                {
-                                    connectionKVP.Value.dataQueue.Enqueue(parsedMessageData[idx]);
-                                }
-
-                                OutputConnectionsDataQueue(currentConnectionSelected);
+                                finalData = NetworkUtilities.parseMessageIgnoringHeaderTags(finalData);
+                                ConsoleUI.enqueueConsoleData(ConsoleMessageType.None, finalData);
 
                                 finalData = "";
                                 savedConnectionData.Clear();
@@ -357,15 +294,13 @@ namespace Venomcc.Networking
                         }
                     }
                 }
+            }
         }
 
         public async override Task Connect()
         {
-            await Task.Run(() =>
-            {
-                Bind();
-                Listen();
-            });
+            await Bind();
+            await Listen();
         }
 
         public async override Task Disconnect()
@@ -376,30 +311,36 @@ namespace Venomcc.Networking
                 {
                     netUserInfo.connSock.Shutdown(SocketShutdown.Both);
                     netUserInfo.connSock.Close();
-                    enqueueInData(ConsoleMessageType.NEWSECTION,
-                                  "[!] Socket powering down. . .");
+                    ConsoleUI.enqueueConsoleData(ConsoleMessageType.NEWSECTION,
+                                     "[!] Socket powering down. . .");
                 }
             });
         }
 
-        protected void Bind()
+        protected async Task Bind()
         {
-            if (netUserInfo.connSock != null && netUserInfo.connSockEndPoint != null)
+            await Task.Run(() =>
             {
-                netUserInfo.connSock.Bind(netUserInfo.connSockEndPoint);
-                enqueueInData(ConsoleMessageType.NEWLINE, 
-                              "[+] Bound to " + netUserInfo.connSockEndPoint.ToString() + " . . .");
-            }
+                if (netUserInfo.connSock != null && netUserInfo.connSockEndPoint != null)
+                {
+                    netUserInfo.connSock.Bind(netUserInfo.connSockEndPoint);
+                    ConsoleUI.enqueueConsoleData(ConsoleMessageType.NEWLINE,
+                                     "[+] Bound to " + netUserInfo.connSockEndPoint.ToString() + " . . .");
+                }
+            });
         }
 
-        protected void Listen()
+        protected async Task Listen()
         {
-            if (netUserInfo.connSock != null)
+            await Task.Run(() =>
             {
-                netUserInfo.connSock.Listen(10);
-                enqueueInData(ConsoleMessageType.NEWLINE,
-                              "[+] Listening for incoming connection(s) . . .");
-            }
+                if (netUserInfo.connSock != null)
+                {
+                    netUserInfo.connSock.Listen(10);
+                    ConsoleUI.enqueueConsoleData(ConsoleMessageType.NEWSECTION,
+                                     "[+] Listening for incoming connection(s) . . .");
+                }
+            });
         }
     }
 
@@ -413,7 +354,7 @@ namespace Venomcc.Networking
 
         public override void ReceiveData()
         {
-            
+
         }
 
         public async override Task Connect()
@@ -423,7 +364,10 @@ namespace Venomcc.Networking
                 if (netUserInfo.connSock != null && netUserInfo.connSockEndPoint != null)
                 {
                     netUserInfo.connSock.ConnectAsync(netUserInfo.connSockEndPoint);
-                    netUserInfo.connections.Add(netUserInfo.connSockEndPoint, (netUserInfo.connSock, new Queue<string>()));
+                    lock (netUserInfo._connectionsLock)
+                    {
+                        netUserInfo.connections.Add(netUserInfo.connSockEndPoint.ToString(), netUserInfo.connSock);
+                    }
                 }
             });
         }
@@ -436,8 +380,8 @@ namespace Venomcc.Networking
                 {
                     netUserInfo.connSock.Shutdown(SocketShutdown.Both);
                     netUserInfo.connSock.Close();
-                    enqueueInData(ConsoleMessageType.NEWSECTION,
-                                  "[!] Socket powering down . . .");
+                    ConsoleUI.enqueueConsoleData(ConsoleMessageType.NEWSECTION,
+                                     "[!] Socket powering down . . .");
                 }
             });
         }

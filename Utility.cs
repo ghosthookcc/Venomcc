@@ -30,40 +30,14 @@ namespace Venomcc.Utility.Networking
 
             return new List<string>();
         }
-        public static List<string> parseMessagesIgnoringHeaderTags(string data)
+
+        public static string parseMessageIgnoringHeaderTags(string data)
         {
-            List<(string tag, int startOffset, int endOffset)> tags = parseMessagesHeaderTags(data);
-            List<string> outMessages = new List<string>();
-
-            string tag;
-            int startOffset;
-            int endOffset;
-
-            List<int> foundIdxs = new List<int>();
-            for (int idx = 0; idx < tags.Count(); idx++)
+            foreach (KeyValuePair<string, string> KVP in NetUser.MessageHeaderTags)
             {
-                tag         = tags[idx].tag;
-                startOffset = tags[idx].startOffset;
-                endOffset   = tags[idx].endOffset;
-
-                if (tag == NetUser.MessageHeaderTags["EM"] || tag == NetUser.MessageHeaderTags["CCD"]) continue;
-                (string tag, int startOffset, int endOffset) nextEmTag = tags.Where(_tag => _tag.tag == NetUser.MessageHeaderTags["EM"]
-                                                                                 && !foundIdxs.Contains(_tag.endOffset)).FirstOrDefault();
-
-                if (nextEmTag.endOffset != 0)
-                {
-                    int dataLength = nextEmTag.startOffset - endOffset;
-                    if (dataLength > 0)
-                    {
-                        string outData = data.Substring(endOffset, dataLength);
-                        outData = outData.Replace(NetUser.MessageHeaderTags["CCD"], "").Trim();
-                        outMessages.Add(outData);
-                    }
-                }    
-                foundIdxs.Add(nextEmTag.endOffset);
+                data = data.Replace(KVP.Value, "");
             }
-
-            return outMessages;
+            return data;
         }
 
         public static List<(string tag, int startOffset, int endOffset)> parseMessagesHeaderTags(string data)
@@ -79,10 +53,10 @@ namespace Venomcc.Utility.Networking
                 {
                     if (idx + messageOffset + KVP.Value.Length > data.Length) continue;
 
-                    tag = data.Substring(idx+messageOffset, KVP.Value.Length);
+                    tag = data.Substring(idx + messageOffset, KVP.Value.Length);
                     if (NetUser.MessageHeaderTags.ContainsValue(tag))
                     {
-                        tags.Add((tag, idx+messageOffset, idx+messageOffset+KVP.Value.Length));
+                        tags.Add((tag, idx + messageOffset, idx + messageOffset + KVP.Value.Length));
                         messageOffset += tag.Length;
                     }
                 }
@@ -124,15 +98,17 @@ namespace Venomcc.Utility.Networking
     }
 }
 
-namespace  Venomcc.Utility.Command
+namespace Venomcc.Utility.Command
 {
     public static class CommandUtilities
     {
         private static Dictionary<string, ICommand.ICommand> commands = new Dictionary<string, ICommand.ICommand>()
         {
-            ["listCons"] = new listCons(new CommandInfo("listCons", null, CommandScope.local)),
+            ["listCons"] = new listCons(),
         };
-        
+
+        static readonly public CommandInterpreter commandInterpreter = new CommandInterpreter();
+
         public static ICommand.ICommand? getCommand(string commandName)
         {
             if (isCommandExist(commandName))

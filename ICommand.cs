@@ -10,15 +10,13 @@ namespace Venomcc.ICommand
         local,
         network,
     }
-
     public interface ICommand
     {
         CommandScope scope { get; }
         void setArguments(List<string>? args);
         void addArgument(string? arg);
-        void Execute();       
+        void Execute();
     }
-
     public class CommandInterpreter
     {
         private Stack<ICommand> _commandHistory = new Stack<ICommand>();
@@ -26,7 +24,7 @@ namespace Venomcc.ICommand
         public void Execute(string commandName, List<string>? args = null)
         {
             ICommand? commandToRun = CommandUtilities.getCommand(commandName);
-            if (commandToRun != null) 
+            if (commandToRun != null)
             {
                 if (args != null)
                 {
@@ -37,10 +35,10 @@ namespace Venomcc.ICommand
             }
         }
 
-        public void Execute(ICommand command) 
-        { 
-            command.Execute(); 
-            _commandHistory.Push(command); 
+        public void Execute(ICommand command)
+        {
+            command.Execute();
+            _commandHistory.Push(command);
         }
 
         public CommandInterpreter()
@@ -56,7 +54,7 @@ namespace Venomcc.ICommand
         {
             if (args != null)
             {
-                
+
             }
         }
         public void addArgument(string? arg = null)
@@ -66,7 +64,7 @@ namespace Venomcc.ICommand
 
             }
         }
-        
+
         public void Execute()
         {
 
